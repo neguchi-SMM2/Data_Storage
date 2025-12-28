@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>データストレージ</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      padding: 20px;
+      font-size: 18px;
+      background: #fffacd;
+    }
+    input, select {
+      margin-bottom: 10px;
+      height: 30px;
+      font-size: 16px;
+      width: 250px;
+    }
+    textarea {
+      width: 100%;
+      margin-bottom: 10px;
+      font-family: sans-serif;
+      font-size: 16px;
+    }
+    .item {
+      border: 1px solid #ccc;
+      padding: 10px;
+      margin-bottom: 10px;
+    }
+    #list {
+      background: #ffffe0;
+    }
+    button {
+      font-size: 14px;
+      height: 35px;
+    }
+    .buttons button {
+      margin-right: 5px;
+    }
+    pre {
+      background: #e0ffe0;
+      padding: 5px;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+  </style>
+</head>
+<body>
+
+<h1>データストレージ</h1>
+
+<small>
+  scratch内のゲームのセーブデータを保存できるサイトです。<br>
+  <b>同じブラウザ・同じPC</b>でのみ保持されます。<br>
+  <b>シークレットモード</b>などでは保存されません。<br>
+  データは<b>ブラウザのキャッシュクリア</b>や<b>PCの初期化</b>を行うと消えます。<br>
+</small>
+
+<h2>データの保存</h2>
+
+<select id="game"></select><br>
+
+<input id="customGame" placeholder="ゲーム名を入力" style="display:none">
+
+<input id="name" placeholder="セーブデータ名"><br>
+
+<textarea id="body" rows="4" placeholder="セーブデータ"></textarea><br>
+
+<button onclick="saveData()">保存</button>
+
+<h2>保存済みデータ</h2>
+
+<select id="filterGame"></select><br>
+<input id="search" placeholder="セーブデータ名で検索">
+<button onclick="loadList()">検索</button>
+
+<div id="list"></div>
+
+<script>
+let db;
+let editId = null;
+
+const DEFAULT_GAME = "マリオメーカー(neguchi)";
+
+const gameSelect = document.getElementById("game");
+const filterSelect = document.getElementById("filterGame");
+const customGameInput = document.getElementById("customGame");
+
+/* ---------- IndexedDB ---------- */
+const request = indexedDB.open("SaveDB", 1);
+
+request.onupgradeneeded = e => {
+  const db = e.target.result;
+  db.createObjectStore("saves", { keyPath: "id", autoIncrement: true });
+};
+
+request.onsuccess = e => {
+  db = e.target.result;
+  refreshGameList();
+  loadList();
+};
+
+function refreshGameList() {
+  const tx = db.transaction("saves", "readonly");
+  const store = tx.objectStore("saves");
+
+  store.getAll().onsuccess = e => {
+    const saves = e.target.result;
+    const gameSet = new Set(saves.map(s => s.game));
+
+    gameSelect.innerHTML = "";
+    filterSelect.innerHTML = "";
+
+    if (gameSet.size === 0) {
+      gameSet.add(DEFAULT_GAME);
+    }
+
+    [...gameSet].forEach(game => {
+      gameSelect.add(new Option(game, game));
+      filterSelect.add(new Option(game, game));
+    });
+
+    gameSelect.add(new Option("その他", "other"));
+
+    filterSelect.add(new Option("すべて表示", ""), 0);
+    filterSelect.value = "";
+  };
+}
+
+gameSelect.onchange = () => {
+  customGameInput.style.display =
+    gameSelect.value === "other" ? "block" : "none";
+};
+
+function saveData() {
+  let game = gameSelect.value;
+
+  if (game === "other") {
+    game = customGameInput.value.trim();
+    if (!game) {
+      alert("ゲーム名を入力してください");
+      return;
+    }
+  }
+
+  const name = document.getElementById("name").value;
+  const body = document.getElementById("body").value;
+
+  if (!name || !body) {
+    alert("すべて入力してください");
+    return;
+  }
+
+  const tx = db.transaction("saves", "readwrite");
+  const store = tx.objectStore("saves");
+
+  const data = {
+    game,
+    name,
+    body,
+    savedAt: new Date().toLocaleString()
+  };
+
+  if (editId === null) {
+    store.add(data);
+  } else {
+    data.id = editId;
+    store.put(data);
+    editId = null;
+  }
+
+  tx.oncomplete = () => {
+    document.getElementById("name").value = "";
+    document.getElementById("body").value = "";
+    customGameInput.value = "";
+    customGameInput.style.display = "none";
+    refreshGameList();
+    loadList();
+  };
+}
+
+function shorten(text, length = 80) {
+  return text.length > length 
+    ? text.slice(0, length) + "..."
+    : text; 
+}
+
+filterSelect.onchange = loadList;
+
+function loadList() {
+  const keyword = document.getElementById("search")?.value.toLowerCase() || "";
+
+  const tx = db.transaction("saves", "readonly");
+  const store = tx.objectStore("saves");
+
+  const req = store.getAll();
+  req.onsuccess = () => {
+    const container = document.getElementById("list");
+    container.innerHTML = "";
+
+    req.result
+      .filter(item =>
+        item.name.toLowerCase().includes(keyword)
+      )
+      .forEach(item => {
+        const div = document.createElement("div");
+        div.className = "item";
+        div.innerHTML = `
+          <strong>ゲーム：</strong>${item.game}<br>
+          <strong>セーブ名：</strong>${item.name}<br>
+          <strong>保存日時：</strong>${item.savedAt}<br>
+          <pre>${shorten(item.body)}</pre>
+          <div class="buttons">
+            <button onclick="copyData(${item.id})">コピー</button>
+            <button onclick="editData(${item.id})">編集</button>
+            <button onclick="deleteData(${item.id})">削除</button>
+          </div>
+        `;
+        container.appendChild(div);
+      });
+  };
+}
+
+function deleteData(id) {
+  const tx = db.transaction("saves", "readwrite");
+  tx.objectStore("saves").delete(id);
+  tx.oncomplete = () => {
+    refreshGameList();
+    loadList();
+  };
+}
+
+function editData(id) {
+  const tx = db.transaction("saves", "readonly");
+  tx.objectStore("saves").get(id).onsuccess = e => {
+    const d = e.target.result;
+    gameSelect.value = d.game;
+    document.getElementById("name").value = d.name;
+    document.getElementById("body").value = d.body;
+    editId = id;
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+}
+</script>
+
+</body>
+</html>
