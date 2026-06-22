@@ -242,6 +242,20 @@ function editData(id) {
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 }
+  
+function copyData(id) {
+  const tx = db.transaction("saves", "readonly");
+  tx.objectStore("saves").get(id).onsuccess = e => {
+    const data = e.target.result;
+    navigator.clipboard.writeText(data.body).then(() => {
+      alert("コピーしました");
+    }).catch(err => {
+      alert("コピーに失敗しました");
+      console.error(err);
+    });
+  };
+}
+  
 </script>
 
 </body>
