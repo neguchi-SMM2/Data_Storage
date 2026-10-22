@@ -35,14 +35,18 @@
       font-size: 14px;
       height: 35px;
     }
+    .buttons {
+      margin-top: 16px;
+    }
     .buttons button {
-      margin-right: 5px;
+      margin-right: 6px;
+      margin-top: 6px;
     }
     .history-box {
-      margin-top: 10px;
+      margin-top: 16px;
       border: 1px solid #d0d0d0;
       background: #fffdf0;
-      padding: 8px;
+      padding: 12px;
     }
     .history-box summary {
       cursor: pointer;
@@ -53,8 +57,8 @@
     }
     .history-item {
       border-top: 1px solid #e0e0e0;
-      padding-top: 8px;
-      margin-top: 8px;
+      padding-top: 10px;
+      margin-top: 10px;
     }
     .history-item:first-child {
       border-top: none;
@@ -62,7 +66,13 @@
       margin-top: 0;
     }
     .history-item button {
-      margin-top: 6px;
+      margin-top: 8px;
+    }
+    .history-item-extra {
+      display: none;
+    }
+    .history-more {
+      margin-top: 10px;
     }
     pre {
       background: #e0ffe0;
@@ -126,6 +136,25 @@ function getHistory(item) {
   return Array.isArray(item.history) ? item.history.slice() : [];
 }
 
+function sameSave(a, b) {
+  return a.game === b.game && a.name === b.name && a.body === b.body;
+}
+
+function toggleHistoryView(id, button, count) {
+  const box = button.closest(".history-box");
+  const hiddenItems = box.querySelectorAll(".history-item-extra");
+  const isShowing = button.dataset.showing === "true";
+
+  hiddenItems.forEach(item => {
+    item.style.display = isShowing ? "none" : "block";
+  });
+
+  button.dataset.showing = String(!isShowing);
+  button.textContent = isShowing
+    ? `以前の履歴を表示（${count}件）`
+    : "以前の履歴を閉じる";
+}
+
 function renderHistory(item) {
   const history = getHistory(item);
 
@@ -133,12 +162,15 @@ function renderHistory(item) {
     return '<div>履歴なし</div>';
   }
 
+  const recentHistory = history.slice(-5);
+  const olderHistory = history.slice(0, -5);
+
   return `
     <div class="history-box">
       <details>
         <summary>保存履歴（${history.length}件）</summary>
         <div class="history-list">
-          ${history.slice().reverse().map((entry, reverseIndex) => {
+          ${recentHistory.slice().reverse().map((entry, reverseIndex) => {
             const originalIndex = history.length - 1 - reverseIndex;
             return `
               <div class="history-item">
@@ -146,10 +178,37 @@ function renderHistory(item) {
                 <div><strong>ゲーム：</strong>${entry.game}</div>
                 <div><strong>名前：</strong>${entry.name}</div>
                 <div><strong>データ：</strong>${shorten(entry.body, 40)}</div>
-                <button onclick="rollbackToVersion(${item.id}, ${originalIndex})">この版へ戻す</button>
+                <div class="buttons">
+                  <button onclick="rollbackToVersion(${item.id}, ${originalIndex})">この版へ戻す</button>
+                  <button onclick="deleteHistoryVersion(${item.id}, ${originalIndex})">履歴を削除</button>
+                </div>
               </div>
             `;
           }).join("")}
+
+          ${olderHistory.length ? olderHistory.slice().reverse().map((entry, index) => {
+            const originalIndex = index;
+            return `
+              <div class="history-item history-item-extra">
+                <div><strong>履歴${index + 1}：</strong>${entry.savedAt}</div>
+                <div><strong>ゲーム：</strong>${entry.game}</div>
+                <div><strong>名前：</strong>${entry.name}</div>
+                <div><strong>データ：</strong>${shorten(entry.body, 40)}</div>
+                <div class="buttons">
+                  <button onclick="rollbackToVersion(${item.id}, ${originalIndex})">この版へ戻す</button>
+                  <button onclick="deleteHistoryVersion(${item.id}, ${originalIndex})">履歴を削除</button>
+                </div>
+              </div>
+            `;
+          }).join("") : ""}
+
+          ${olderHistory.length ? `
+            <div class="history-more">
+              <button onclick="toggleHistoryView(${item.id}, this, ${olderHistory.length})" data-showing="false">
+                以前の履歴を表示（${olderHistory.length}件）
+              </button>
+            </div>
+          ` : ""}
         </div>
       </details>
     </div>
@@ -250,6 +309,12 @@ function saveData() {
 
   getReq.onsuccess = () => {
     const current = getReq.result;
+
+    if (sameSave(current, saveRecord)) {
+      alert("変更がないため保存しません");
+      return;
+    }
+
     const history = getHistory(current);
     history.push(snapshotOf(current));
 
@@ -349,6 +414,42 @@ function copyData(id) {
       alert("コピーに失敗しました");
       console.error(err);
     });
+  };
+}
+
+function deleteHistoryVersion(id, historyIndex) {
+  const tx = db.transaction("saves", "readwrite");
+  const store = tx.objectStore("saves");
+  const getReq = store.get(id);
+
+  getReq.onsuccess = () => {
+    const current = getReq.result;
+    if (!current) {
+      alert("対象のデータが見つかりません");
+      return;
+    }
+
+    const history = getHistory(current);
+    if (historyIndex < 0 || historyIndex >= history.length) {
+      alert("指定した履歴が見つかりません");
+      return;
+    }
+
+    const target = history[historyIndex];
+    if (!window.confirm(`履歴（${target.savedAt}）を削除しますか？`)) {
+      return;
+    }
+
+    const nextHistory = history.filter((_, i) => i !== historyIndex);
+    store.put({
+      ...current,
+      history: nextHistory
+    });
+  };
+
+  tx.oncomplete = () => {
+    refreshGameList();
+    loadList();
   };
 }
 
