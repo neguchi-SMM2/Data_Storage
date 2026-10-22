@@ -38,6 +38,25 @@
     .buttons button {
       margin-right: 5px;
     }
+    .history-box {
+      margin-top: 10px;
+      border: 1px solid #d0d0d0;
+      background: #fffdf0;
+      padding: 8px;
+    }
+    .history-item {
+      border-top: 1px solid #e0e0e0;
+      padding-top: 8px;
+      margin-top: 8px;
+    }
+    .history-item:first-child {
+      border-top: none;
+      padding-top: 0;
+      margin-top: 0;
+    }
+    .history-item button {
+      margin-top: 6px;
+    }
     pre {
       background: #e0ffe0;
       padding: 5px;
@@ -86,6 +105,44 @@ const DEFAULT_GAME = "しょぼんめーかー";
 const gameSelect = document.getElementById("game");
 const filterSelect = document.getElementById("filterGame");
 const customGameInput = document.getElementById("customGame");
+
+function snapshotOf(item) {
+  return {
+    game: item.game,
+    name: item.name,
+    body: item.body,
+    savedAt: item.savedAt
+  };
+}
+
+function getHistory(item) {
+  return Array.isArray(item.history) ? item.history.slice() : [];
+}
+
+function renderHistory(item) {
+  const history = getHistory(item);
+
+  if (history.length === 0) {
+    return '<div>履歴なし</div>';
+  }
+
+  return `
+    <div class="history-box">
+      ${history.slice().reverse().map((entry, reverseIndex) => {
+        const originalIndex = history.length - 1 - reverseIndex;
+        return `
+          <div class="history-item">
+            <div><strong>履歴${history.length - reverseIndex}：</strong>${entry.savedAt}</div>
+            <div><strong>ゲーム：</strong>${entry.game}</div>
+            <div><strong>名前：</strong>${entry.name}</div>
+            <div><strong>データ：</strong>${shorten(entry.body, 40)}</div>
+            <button onclick="rollbackToVersion(${item.id}, ${originalIndex})">この版へ戻す</button>
+          </div>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
 
 /* ---------- IndexedDB ---------- */
 const request = indexedDB.open("SaveDB", 1);
@@ -181,14 +238,8 @@ function saveData() {
 
   getReq.onsuccess = () => {
     const current = getReq.result;
-    const history = Array.isArray(current?.history) ? [...current.history] : [];
-
-    history.push({
-      game: current.game,
-      name: current.name,
-      body: current.body,
-      savedAt: current.savedAt
-    });
+    const history = getHistory(current);
+    history.push(snapshotOf(current));
 
     const writeTx = db.transaction("saves", "readwrite");
     const writeStore = writeTx.objectStore("saves");
@@ -231,23 +282,22 @@ function loadList() {
     container.innerHTML = "";
 
     req.result
-      .filter(item =>
-        item.name.toLowerCase().includes(keyword)
-      )
+      .filter(item => item.name.toLowerCase().includes(keyword))
       .forEach(item => {
-        const historyCount = Array.isArray(item.history) ? item.history.length : 0;
+        const history = getHistory(item);
         const div = document.createElement("div");
         div.className = "item";
         div.innerHTML = `
           <strong>ゲーム：</strong>${item.game}<br>
           <strong>セーブ名：</strong>${item.name}<br>
           <strong>保存日時：</strong>${item.savedAt}<br>
-          <strong>保存履歴：</strong>${historyCount}件<br>
+          <strong>保存履歴：</strong>${history.length}件<br>
           <pre>${shorten(item.body)}</pre>
+          ${renderHistory(item)}
           <div class="buttons">
             <button onclick="copyData(${item.id})">コピー</button>
             <button onclick="editData(${item.id})">編集</button>
-            <button onclick="rollbackData(${item.id})" ${historyCount === 0 ? "disabled" : ""}>ロールバック</button>
+            <button onclick="rollbackData(${item.id})" ${history.length === 0 ? "disabled" : ""}>前の版へ戻す</button>
             <button onclick="deleteData(${item.id})">削除</button>
           </div>
         `;
@@ -291,26 +341,52 @@ function copyData(id) {
 }
 
 function rollbackData(id) {
+  const tx = db.transaction("saves", "readonly");
+  const store = tx.objectStore("saves");
+  const getReq = store.get(id);
+
+  getReq.onsuccess = () => {
+    const current = getReq.result;
+    const history = getHistory(current);
+    if (!current || history.length === 0) {
+      alert("ロールバックできる前の版がありません");
+      return;
+    }
+
+    rollbackToVersion(id, history.length - 1);
+  };
+}
+
+function rollbackToVersion(id, historyIndex) {
   const tx = db.transaction("saves", "readwrite");
   const store = tx.objectStore("saves");
   const getReq = store.get(id);
 
   getReq.onsuccess = () => {
     const current = getReq.result;
-    if (!current || !Array.isArray(current.history) || current.history.length === 0) {
-      alert("ロールバックできる前の版がありません");
+    if (!current) {
+      alert("対象のデータが見つかりません");
       return;
     }
 
-    const previous = current.history[current.history.length - 1];
+    const history = getHistory(current);
+    if (historyIndex < 0 || historyIndex >= history.length) {
+      alert("指定した履歴が見つかりません");
+      return;
+    }
+
+    const target = history[historyIndex];
+    if (!window.confirm(`「${target.name}」(${target.savedAt}) の状態に戻しますか？`)) {
+      return;
+    }
+
+    const nextHistory = history.filter((_, i) => i !== historyIndex);
+    nextHistory.push(snapshotOf(current));
 
     store.put({
-      ...current,
-      game: previous.game,
-      name: previous.name,
-      body: previous.body,
-      savedAt: previous.savedAt,
-      history: current.history.slice(0, -1)
+      ...target,
+      id,
+      history: nextHistory
     });
   };
 
