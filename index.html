@@ -44,6 +44,13 @@
       background: #fffdf0;
       padding: 8px;
     }
+    .history-box summary {
+      cursor: pointer;
+      font-weight: bold;
+    }
+    .history-list {
+      margin-top: 8px;
+    }
     .history-item {
       border-top: 1px solid #e0e0e0;
       padding-top: 8px;
@@ -128,18 +135,23 @@ function renderHistory(item) {
 
   return `
     <div class="history-box">
-      ${history.slice().reverse().map((entry, reverseIndex) => {
-        const originalIndex = history.length - 1 - reverseIndex;
-        return `
-          <div class="history-item">
-            <div><strong>履歴${history.length - reverseIndex}：</strong>${entry.savedAt}</div>
-            <div><strong>ゲーム：</strong>${entry.game}</div>
-            <div><strong>名前：</strong>${entry.name}</div>
-            <div><strong>データ：</strong>${shorten(entry.body, 40)}</div>
-            <button onclick="rollbackToVersion(${item.id}, ${originalIndex})">この版へ戻す</button>
-          </div>
-        `;
-      }).join("")}
+      <details>
+        <summary>保存履歴（${history.length}件）</summary>
+        <div class="history-list">
+          ${history.slice().reverse().map((entry, reverseIndex) => {
+            const originalIndex = history.length - 1 - reverseIndex;
+            return `
+              <div class="history-item">
+                <div><strong>履歴${history.length - reverseIndex}：</strong>${entry.savedAt}</div>
+                <div><strong>ゲーム：</strong>${entry.game}</div>
+                <div><strong>名前：</strong>${entry.name}</div>
+                <div><strong>データ：</strong>${shorten(entry.body, 40)}</div>
+                <button onclick="rollbackToVersion(${item.id}, ${originalIndex})">この版へ戻す</button>
+              </div>
+            `;
+          }).join("")}
+        </div>
+      </details>
     </div>
   `;
 }
