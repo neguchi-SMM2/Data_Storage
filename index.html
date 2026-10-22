@@ -152,10 +152,7 @@ function saveData() {
     return;
   }
 
-  const tx = db.transaction("saves", "readwrite");
-  const store = tx.objectStore("saves");
-
-  const data = {
+  const saveRecord = {
     game,
     name,
     body,
@@ -163,20 +160,54 @@ function saveData() {
   };
 
   if (editId === null) {
-    store.add(data);
-  } else {
-    data.id = editId;
-    store.put(data);
-    editId = null;
+    const tx = db.transaction("saves", "readwrite");
+    const store = tx.objectStore("saves");
+    store.add(saveRecord);
+
+    tx.oncomplete = () => {
+      document.getElementById("name").value = "";
+      document.getElementById("body").value = "";
+      customGameInput.value = "";
+      customGameInput.style.display = "none";
+      refreshGameList();
+      loadList();
+    };
+    return;
   }
 
-  tx.oncomplete = () => {
-    document.getElementById("name").value = "";
-    document.getElementById("body").value = "";
-    customGameInput.value = "";
-    customGameInput.style.display = "none";
-    refreshGameList();
-    loadList();
+  const readTx = db.transaction("saves", "readonly");
+  const readStore = readTx.objectStore("saves");
+  const getReq = readStore.get(editId);
+
+  getReq.onsuccess = () => {
+    const current = getReq.result;
+    const history = Array.isArray(current?.history) ? [...current.history] : [];
+
+    history.push({
+      game: current.game,
+      name: current.name,
+      body: current.body,
+      savedAt: current.savedAt
+    });
+
+    const writeTx = db.transaction("saves", "readwrite");
+    const writeStore = writeTx.objectStore("saves");
+
+    writeStore.put({
+      ...saveRecord,
+      id: editId,
+      history
+    });
+
+    writeTx.oncomplete = () => {
+      editId = null;
+      document.getElementById("name").value = "";
+      document.getElementById("body").value = "";
+      customGameInput.value = "";
+      customGameInput.style.display = "none";
+      refreshGameList();
+      loadList();
+    };
   };
 }
 
@@ -204,16 +235,19 @@ function loadList() {
         item.name.toLowerCase().includes(keyword)
       )
       .forEach(item => {
+        const historyCount = Array.isArray(item.history) ? item.history.length : 0;
         const div = document.createElement("div");
         div.className = "item";
         div.innerHTML = `
           <strong>ゲーム：</strong>${item.game}<br>
           <strong>セーブ名：</strong>${item.name}<br>
           <strong>保存日時：</strong>${item.savedAt}<br>
+          <strong>保存履歴：</strong>${historyCount}件<br>
           <pre>${shorten(item.body)}</pre>
           <div class="buttons">
             <button onclick="copyData(${item.id})">コピー</button>
             <button onclick="editData(${item.id})">編集</button>
+            <button onclick="rollbackData(${item.id})" ${historyCount === 0 ? "disabled" : ""}>ロールバック</button>
             <button onclick="deleteData(${item.id})">削除</button>
           </div>
         `;
@@ -253,6 +287,36 @@ function copyData(id) {
       alert("コピーに失敗しました");
       console.error(err);
     });
+  };
+}
+
+function rollbackData(id) {
+  const tx = db.transaction("saves", "readwrite");
+  const store = tx.objectStore("saves");
+  const getReq = store.get(id);
+
+  getReq.onsuccess = () => {
+    const current = getReq.result;
+    if (!current || !Array.isArray(current.history) || current.history.length === 0) {
+      alert("ロールバックできる前の版がありません");
+      return;
+    }
+
+    const previous = current.history[current.history.length - 1];
+
+    store.put({
+      ...current,
+      game: previous.game,
+      name: previous.name,
+      body: previous.body,
+      savedAt: previous.savedAt,
+      history: current.history.slice(0, -1)
+    });
+  };
+
+  tx.oncomplete = () => {
+    refreshGameList();
+    loadList();
   };
 }
   
